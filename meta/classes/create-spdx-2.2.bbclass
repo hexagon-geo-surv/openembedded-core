@@ -401,6 +401,8 @@ python do_create_spdx() {
     from contextlib import contextmanager
     import oe.cve_check
 
+    oe.spdx_common.load_spdx_license_data(d)
+
     @contextmanager
     def optional_tarfile(name, guard, mode="w"):
         import tarfile

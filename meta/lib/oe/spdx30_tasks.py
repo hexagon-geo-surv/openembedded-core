@@ -452,6 +452,9 @@ def create_spdx(d):
         if val:
             setattr(obj, name, val)
 
+    import oe.spdx_common
+    oe.spdx_common.load_spdx_license_data(d)
+
     deploydir = Path(d.getVar("SPDXDEPLOY"))
     deploy_dir_spdx = Path(d.getVar("DEPLOY_DIR_SPDX"))
     spdx_workdir = Path(d.getVar("SPDXWORK"))
