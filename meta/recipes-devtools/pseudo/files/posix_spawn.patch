@@ -1,0 +1,248 @@
+From: Richard Purdie <richard.purdie@linuxfoundation.org>
+
+Add wrappers for posix_spawn and posix_spawnp to avoid problems with python 3.13
+after https://github.com/python/cpython/commit/2b93f5224216d10f8119373e72b5c2b3984e0af6
+
+Upstream-Status: Pending
+
+Signed-off-by: Richard Purdie <richard.purdie@linuxfoundation.org>
+---
+ ports/common/guts/posix_spawn.c  | 33 ++++++++++++++
+ ports/common/guts/posix_spawnp.c | 33 ++++++++++++++
+ ports/common/pseudo_wrappers.c   | 76 ++++++++++++++++++++++++++++++++
+ ports/common/wrapfuncs.in        |  2 +
+ 4 files changed, 144 insertions(+)
+ create mode 100644 ports/common/guts/posix_spawn.c
+ create mode 100644 ports/common/guts/posix_spawnp.c
+
+Index: git/ports/common/guts/posix_spawn.c
+===================================================================
+--- /dev/null
++++ git/ports/common/guts/posix_spawn.c
+@@ -0,0 +1,34 @@
++/* 
++ * Copyright (c) 2024 Linux Foundation
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only
++ *
++ * static int
++ * weap_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++ *	int rc = -1;
++ */
++	char * const *new_environ;
++	/* note:  we don't canonicalize this, because we are intentionally
++	 * NOT redirecting execs into the chroot environment.  If you try
++	 * to execute /bin/sh, you get the actual /bin/sh, not
++	 * <CHROOT>/bin/sh.  This allows use of basic utilities.  This
++	 * design will likely be revisited.
++	 */
++        if (antimagic == 0) {
++		const char *path_guess = pseudo_exec_path(path, 0);
++                pseudo_client_op(OP_EXEC, PSA_EXEC, -1, -1, path_guess, 0);
++        }
++
++	new_environ = pseudo_setupenvp(envp);
++	if (pseudo_has_unload(new_environ))
++		new_environ = pseudo_dropenvp(new_environ);
++
++	/* if exec() fails, we may end up taking signals unexpectedly...
++	 * not much we can do about that.
++	 */
++	sigprocmask(SIG_SETMASK, &pseudo_saved_sigmask, NULL);
++	rc = real_posix_spawn(pid, path, file_actions, attrp, argv, new_environ);
++
++/*	return rc;
++ * }
++ */
+Index: git/ports/common/guts/posix_spawnp.c
+===================================================================
+--- /dev/null
++++ git/ports/common/guts/posix_spawnp.c
+@@ -0,0 +1,34 @@
++/* 
++ * Copyright (c) 2024 Linux Foundation
++ *
++ * SPDX-License-Identifier: LGPL-2.1-only
++ *
++ * static int
++ * wrap_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++ *	int rc = -1;
++ */
++	char * const *new_environ;
++	/* note:  we don't canonicalize this, because we are intentionally
++	 * NOT redirecting execs into the chroot environment.  If you try
++	 * to execute /bin/sh, you get the actual /bin/sh, not
++	 * <CHROOT>/bin/sh.  This allows use of basic utilities.  This
++	 * design will likely be revisited.
++	 */
++        if (antimagic == 0) {
++		const char *path_guess = pseudo_exec_path(file, 1);
++                pseudo_client_op(OP_EXEC, PSA_EXEC, -1, -1, path_guess, 0);
++        }
++
++	new_environ = pseudo_setupenvp(envp);
++	if (pseudo_has_unload(new_environ))
++		new_environ = pseudo_dropenvp(new_environ);
++
++	/* if exec() fails, we may end up taking signals unexpectedly...
++	 * not much we can do about that.
++	 */
++	sigprocmask(SIG_SETMASK, &pseudo_saved_sigmask, NULL);
++	rc = real_posix_spawnp(pid, file, file_actions, attrp, argv, new_environ);
++
++/*	return rc;
++ * }
++ */
+Index: git/ports/common/pseudo_wrappers.c
+===================================================================
+--- git.orig/ports/common/pseudo_wrappers.c
++++ git/ports/common/pseudo_wrappers.c
+@@ -6,6 +6,9 @@
+ /* these aren't used, but the wrapper table isn't happy unless they
+  * exist
+  */
++
++#include <spawn.h>
++
+ static int
+ wrap_execl(const char *file, const char *arg, va_list ap) {
+ 	(void) file;
+@@ -410,4 +413,100 @@ wrap_fork(void) {
+ 
+ 	return rc;
+ }
++
++
++int
++posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++	sigset_t saved;
++
++	int rc = -1;
++	PROFILE_START;
++
++	if (!pseudo_check_wrappers() || !real_posix_spawn) {
++		/* rc was initialized to the "failure" value */
++		pseudo_enosys("posix_spawn");
++		PROFILE_DONE;
++		return rc;
++	}
++
++	pseudo_debug(PDBGF_WRAPPER, "called: posix_spawn\n");
++	pseudo_sigblock(&saved);
++	if (pseudo_getlock()) {
++		errno = EBUSY;
++		sigprocmask(SIG_SETMASK, &saved, NULL);
++		PROFILE_DONE;
++		return -1;
++	}
++
++	int save_errno;
++
++	/* exec*() use this to restore the sig mask */
++	pseudo_saved_sigmask = saved;
++	rc = wrap_posix_spawn(pid, path, file_actions, attrp, argv, envp);
++
++	save_errno = errno;
++	pseudo_droplock();
++	sigprocmask(SIG_SETMASK, &saved, NULL);
++	pseudo_debug(PDBGF_WRAPPER, "completed: posix_spawn\n");
++	errno = save_errno;
++	PROFILE_DONE;
++	return rc;
++}
++
++int
++posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++	sigset_t saved;
++
++	int rc = -1;
++	PROFILE_START;
++
++	if (!pseudo_check_wrappers() || !real_posix_spawnp) {
++		/* rc was initialized to the "failure" value */
++		pseudo_enosys("posix_spawn");
++		PROFILE_DONE;
++		return rc;
++	}
++
++	pseudo_debug(PDBGF_WRAPPER, "called: posix_spawnp\n");
++	pseudo_sigblock(&saved);
++	if (pseudo_getlock()) {
++		errno = EBUSY;
++		sigprocmask(SIG_SETMASK, &saved, NULL);
++		PROFILE_DONE;
++		return -1;
++	}
++
++	int save_errno;
++
++	/* exec*() use this to restore the sig mask */
++	pseudo_saved_sigmask = saved;
++	rc = wrap_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
++
++	save_errno = errno;
++	pseudo_droplock();
++	sigprocmask(SIG_SETMASK, &saved, NULL);
++	pseudo_debug(PDBGF_WRAPPER, "completed: posix_spawnp\n");
++	errno = save_errno;
++	PROFILE_DONE;
++	return rc;
++}
++
++
++static int
++wrap_posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++	int rc = -1;
++
++#include "guts/posix_spawn.c"
++
++	return rc;
++}
++
++static int
++wrap_posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp) {
++	int rc = -1;
++
++#include "guts/posix_spawnp.c"
++
++	return rc;
++}
+ 
+Index: git/ports/common/wrapfuncs.in
+===================================================================
+--- git.orig/ports/common/wrapfuncs.in
++++ git/ports/common/wrapfuncs.in
+@@ -5,3 +5,5 @@ int execv(const char *file, char *const
+ int execve(const char *file, char *const *argv, char *const *envp); /* hand_wrapped=1 */
+ int execvp(const char *file, char *const *argv); /* hand_wrapped=1 */
+ int fork(void); /* hand_wrapped=1 */
++int posix_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp); /* hand_wrapped=1 */
++int posix_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *file_actions, const posix_spawnattr_t *attrp, char *const *argv, char *const *envp); /* hand_wrapped=1 */
+Index: git/ports/common/portdefs.h
+===================================================================
+--- /dev/null
++++ git/ports/common/portdefs.h
+@@ -0,0 +1 @@
++#include <spawn.h>
+Index: git/pseudo_util.c
+===================================================================
+--- git.orig/pseudo_util.c
++++ git/pseudo_util.c
+@@ -1051,7 +1051,7 @@ pseudo_setupenvp(char * const *envp) {
+ 	free(pseudo_get_libdir());
+ 	free(pseudo_get_localstatedir());
+ 
+-	for (i = 0; envp[i]; ++i) {
++	for (i = 0; envp && envp[i]; ++i) {
+ 		if (STARTSWITH(envp[i], PRELINK_LIBRARIES "=")) {
+ 			ld_preload = envp[i];
+ 		}
+@@ -1113,7 +1113,7 @@ pseudo_setupenvp(char * const *envp) {
+ 
+ 	free(libdir_path);
+ 
+-	for (i = 0; envp[i]; ++i) {
++	for (i = 0; envp && envp[i]; ++i) {
+ 		if (STARTSWITH(envp[i], PRELINK_LIBRARIES "=")) continue;
+ 		if (STARTSWITH(envp[i], PRELINK_PATH "=")) continue;
+ 		new_envp[j++] = envp[i];
