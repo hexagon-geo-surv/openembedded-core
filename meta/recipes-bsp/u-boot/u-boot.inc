@@ -81,6 +81,7 @@ uboot_compile_config () {
     for binary in ${UBOOT_BINARIES}; do
         k=$(expr $k + 1);
         if [ $k -eq $i ]; then
+            uboot_compile_config_prepare_binary $config $type $binary
             uboot_compile_config_copy_binary $config $type $binary
         fi
     done
@@ -91,6 +92,13 @@ uboot_compile_config () {
         oe_runmake -C ${S} O=${B}/${config} u-boot-initial-env
         cp ${B}/${config}/u-boot-initial-env ${B}/${config}/u-boot-initial-env-${type}
     fi
+}
+
+# Do nothing by default, this is a hook to be extended by BSP recipes
+uboot_compile_config_prepare_binary () {
+    config=$1
+    type=$2
+    binary=$3
 }
 
 uboot_compile_config_copy_binary () {
