@@ -31,6 +31,20 @@ class TestSDK(TestSDKBase):
     context_class = OESDKTestContext
     test_type = 'sdk'
 
+    def get_sdk_paths(self, d):
+        """
+        Returns a list of paths where SDK test must reside.
+
+        SDK tests are expected in <LAYER_DIR>/lib/oeqa/sdk/cases/
+        """
+        paths = []
+
+        for layer in d.getVar('BBLAYERS').split():
+            path = os.path.join(layer, 'lib/oeqa/sdk/cases')
+            if os.path.isdir(path):
+                paths.append(path)
+        return paths
+
     def get_tcname(self, d):
         """
         Get the name of the SDK file
@@ -114,7 +128,7 @@ class TestSDK(TestSDKBase):
                 host_pkg_manifest=host_pkg_manifest, **context_args)
 
             try:
-                tc.loadTests(self.context_executor_class.default_cases)
+                tc.loadTests(self.get_sdk_paths(d))
             except Exception as e:
                 import traceback
                 bb.fatal("Loading tests failed:\n%s" % traceback.format_exc())
