@@ -14,6 +14,7 @@ UPSTREAM_CHECK_URI = "https://gnupg.org/download/index.html"
 SRC_URI = "${GNUPG_MIRROR}/${BPN}/${BPN}-${PV}.tar.bz2 \
            file://libassuan_pkgconf.patch \
            file://gpg-error_pkconf.patch \
+           file://0001-autogen.sh-drop-unknown-suffix-from-version-number.patch \
 "
 
 SRC_URI[sha256sum] = "bc72ee27c7239007ab1896c3c2fae53b076e2c9bd2483dc2769a16902bce8c04"
