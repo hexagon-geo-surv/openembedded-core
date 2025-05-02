@@ -1,65 +1,280 @@
 glibc 2.38 would include  __isoc23_strtol and similar symbols. This is trggerd by
-_GNU_SOURCE but we have to set that for other definitions. Therefore play with defines
-to turn this off within pseudo_wrappers.c. Elsewhere we can switch to _DEFAULT_SOURCE
-rather than _GNU_SOURCE.
+_GNU_SOURCE but we have to set that for other definitions. Therefore add a seperate
+wrapper function so we can control the contexts correctly.
 
 Upstream-Status: Pending
 
-Index: git/pseudo_wrappers.c
+Index: git/Makefile.in
 ===================================================================
---- git.orig/pseudo_wrappers.c
-+++ git/pseudo_wrappers.c
-@@ -6,6 +6,18 @@
-  * SPDX-License-Identifier: LGPL-2.1-only
-  *
-  */
-+/* glibc 2.38 would include  __isoc23_strtol and similar symbols. This is trggerd by
-+ * _GNU_SOURCE but we have to set that for other definitions. Therefore play with defines
-+ * to turn this off.
-+ */
-+#include <features.h>
-+#undef __GLIBC_USE_ISOC2X
-+#undef __GLIBC_USE_C2X_STRTOL
-+#define __GLIBC_USE_C2X_STRTOL 0
-+#undef __GLIBC_USE_ISOC23
-+#undef __GLIBC_USE_C23_STRTOL
-+#define __GLIBC_USE_C23_STRTOL 0
+--- git.orig/Makefile.in
++++ git/Makefile.in
+@@ -57,7 +57,7 @@ SOURCES=$(wildcard *.c)
+ OBJS=$(subst .c,.o,$(SOURCES))
+ TESTS=$(patsubst %.c,%,$(wildcard test/*.c))
+ 
+-SHOBJS=pseudo_tables.o pseudo_util.o
++SHOBJS=pseudo_tables.o pseudo_util.o strtol.o
+ DBOBJS=pseudo_db.o
+ WRAPOBJS=pseudo_wrappers.o
+ 
+@@ -100,15 +100,15 @@ $(BIN) $(LIB):
+ 
+ pseudo: $(PSEUDO)
+ 
+-$(PSEUDO): pseudo.o $(SHOBJS) $(DBOBJS) pseudo_client.o pseudo_server.o pseudo_ipc.o | $(BIN)
++$(PSEUDO): pseudo.o $(SHOBJS) $(DBOBJS) pseudo_client.o pseudo_client_scanf.o pseudo_server.o pseudo_ipc.o | $(BIN)
+ 	$(CC) $(CFLAGS) $(CFLAGS_PSEUDO) -o $(PSEUDO) \
+-		pseudo.o pseudo_server.o pseudo_client.o pseudo_ipc.o \
++		pseudo.o pseudo_server.o pseudo_client.o pseudo_client_scanf.o pseudo_ipc.o \
+ 		$(DBOBJS) $(SHOBJS) $(LDFLAGS) $(DB_LDFLAGS) $(CLIENT_LDFLAGS)
+ 
+ pseudolog: $(PSEUDOLOG)
+ 
+-$(PSEUDOLOG): pseudolog.o $(SHOBJS) $(DBOBJS) pseudo_client.o pseudo_ipc.o | $(BIN)
+-	$(CC) $(CFLAGS) $(CFLAGS_PSEUDO) -o $(PSEUDOLOG) pseudolog.o pseudo_client.o pseudo_ipc.o \
++$(PSEUDOLOG): pseudolog.o $(SHOBJS) $(DBOBJS) pseudo_client.o pseudo_client_scanf.o pseudo_ipc.o | $(BIN)
++	$(CC) $(CFLAGS) $(CFLAGS_PSEUDO) -o $(PSEUDOLOG) pseudolog.o pseudo_client.o pseudo_client_scanf.o pseudo_ipc.o \
+ 		$(DBOBJS) $(SHOBJS) $(LDFLAGS) $(DB_LDFLAGS) $(CLIENT_LDFLAGS)
+ 
+ pseudodb: $(PSEUDODB)
+@@ -119,9 +119,9 @@ $(PSEUDODB): pseudodb.o $(SHOBJS) $(DBOB
+ 
+ libpseudo: $(LIBPSEUDO)
+ 
+-$(LIBPSEUDO): $(WRAPOBJS) pseudo_client.o pseudo_ipc.o $(SHOBJS) | $(LIB)
++$(LIBPSEUDO): $(WRAPOBJS) pseudo_client.o pseudo_client_scanf.o pseudo_ipc.o $(SHOBJS) | $(LIB)
+ 	$(CC) $(CFLAGS) $(CFLAGS_PSEUDO) -shared -o $(LIBPSEUDO) \
+-		pseudo_client.o pseudo_ipc.o \
++		pseudo_client.o pseudo_client_scanf.o pseudo_ipc.o \
+ 		$(WRAPOBJS) $(SHOBJS) $(LDFLAGS) $(CLIENT_LDFLAGS)
+ 
+ # *everything* now relies on stuff that's generated in the
+@@ -135,6 +135,8 @@ pseudo_client.o pseudo_server.o pseudo_i
+ 
+ pseudo_client.o: pseudo_client.h
+ 
++pseudo_client_scanf.o: pseudo_client.h
 +
- #include <assert.h>
- #include <stdlib.h>
- #include <limits.h>
+ pseudo_server.o: pseudo_server.h
+ 
+ tables: enums/*.in maketables templatefile.py $(TABLES)
+Index: git/pseudo.c
+===================================================================
+--- git.orig/pseudo.c
++++ git/pseudo.c
+@@ -212,7 +212,7 @@ main(int argc, char *argv[]) {
+ 			opt_S = 1;
+ 			break;
+ 		case 't': /* timeout */
+-			pseudo_server_timeout = strtol(optarg, &s, 10);
++			pseudo_server_timeout = pseudo_strtol_wrapper(optarg, &s, 10);
+ 			if (*s && !isspace(*s)) {
+ 				pseudo_diag("Timeout must be an integer value.\n");
+ 				usage(EXIT_FAILURE);
+Index: git/pseudo.h
+===================================================================
+--- git.orig/pseudo.h
++++ git/pseudo.h
+@@ -85,6 +85,10 @@ extern int pseudo_etc_file(const char *f
+ extern void pseudo_stat32_from64(struct stat *, const struct stat64 *);
+ extern void pseudo_stat64_from32(struct stat64 *, const struct stat *);
+ 
++extern long pseudo_strtol_wrapper(const char *, char **, int);
++extern long long pseudo_strtoll_wrapper(const char *, char **, int);
++extern int pseudo_atoi_wrapper(const char *);
++
+ extern char *pseudo_version;
+ 
+ #ifndef PSEUDO_BINDIR
+Index: git/pseudolog.c
+===================================================================
+--- git.orig/pseudolog.c
++++ git/pseudolog.c
+@@ -452,7 +452,7 @@ plog_trait(int opt, char *string) {
+ 	case PSQF_GID:
+ 	case PSQF_INODE:
+ 	case PSQF_UID:
+-		new_trait->data.ivalue = strtoll(string, &endptr, 0);
++		new_trait->data.ivalue = pseudo_strtoll_wrapper(string, &endptr, 0);
+ 		if (*endptr) {
+ 			pseudo_diag("Unexpected garbage after number (%llu): '%s'\n",
+ 				new_trait->data.ivalue, endptr);
+@@ -462,7 +462,7 @@ plog_trait(int opt, char *string) {
+ 		break;
+ 	case PSQF_MODE:
+ 	case PSQF_PERM:
+-		new_trait->data.ivalue = strtoll(string, &endptr, 8);
++		new_trait->data.ivalue = pseudo_strtoll_wrapper(string, &endptr, 8);
+ 		if (!*endptr) {
+ 			break;
+ 		}
+Index: git/strtol.c
+===================================================================
+--- /dev/null
++++ git/strtol.c
+@@ -0,0 +1,26 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include "pseudo.h"
++
++/*
++ * glibc 2.38 would include  __isoc23_strtol and similar symbols if _GNU_SOURCE
++ * is used. We have to set that for other definitions so delcare this wrapper
++ * in a context where we don't have that set.
++ *
++ * We need to wrap strtol, strtoll, atoi, fscanf and sscanf.
++ */
++
++int pseudo_atoi_wrapper(const char *nptr)
++{
++	return atoi(nptr);
++}
++
++long pseudo_strtol_wrapper(const char *nptr, char **endptr, int base)
++{
++	return strtol(nptr, endptr, base);
++}
++
++long long pseudo_strtoll_wrapper(const char *nptr, char **endptr, int base)
++{
++	return strtoll(nptr, endptr, base);
++}
 Index: git/pseudo_util.c
 ===================================================================
 --- git.orig/pseudo_util.c
 +++ git/pseudo_util.c
-@@ -8,6 +8,17 @@
-  */
- /* we need access to RTLD_NEXT for a horrible workaround */
- #define _GNU_SOURCE
-+/* glibc 2.38 would include  __isoc23_strtol and similar symbols. This is trggerd by
-+ * _GNU_SOURCE but we have to set that for other definitions. Therefore play with defines
-+ * to turn this off.
-+ */
-+#include <features.h>
-+#undef __GLIBC_USE_ISOC2X
-+#undef __GLIBC_USE_C2X_STRTOL
-+#define __GLIBC_USE_C2X_STRTOL 0
-+#undef __GLIBC_USE_ISOC23
-+#undef __GLIBC_USE_C23_STRTOL
-+#define __GLIBC_USE_C23_STRTOL 0
- 
- #include <ctype.h>
- #include <errno.h>
+@@ -229,7 +229,7 @@ pseudo_init_util(void) {
+ 	env = pseudo_get_value("PSEUDO_DEBUG");
+ 	if (env) {
+ 		int i;
+-		int level = atoi(env);
++		int level = pseudo_atoi_wrapper(env);
+ 		if (level > 0) {
+ 			for (i = 0; i < level; ++i) {
+ 				pseudo_debug_verbose();
+Index: git/ports/unix/guts/linkat.c
+===================================================================
+--- git.orig/ports/unix/guts/linkat.c
++++ git/ports/unix/guts/linkat.c
+@@ -55,7 +55,7 @@
+ 		errno = ENOSYS;
+ 		return -1;
+ #endif
+-		tmpfile_fd = atoi(oldpath + 14);
++		tmpfile_fd = pseudo_atoi_wrapper(oldpath + 14);
+ 		// call actual link
+ 		rc = real_linkat(AT_FDCWD, oldpath, AT_FDCWD, newpath, AT_SYMLINK_FOLLOW);
+ 	} else
 Index: git/pseudo_client.c
 ===================================================================
 --- git.orig/pseudo_client.c
 +++ git/pseudo_client.c
-@@ -6,7 +6,7 @@
-  * SPDX-License-Identifier: LGPL-2.1-only
-  *
-  */
--#define _GNU_SOURCE
-+#define _DEFAULT_SOURCE
+@@ -614,7 +614,7 @@ pseudo_init_client(void) {
+ 			 * at all.
+ 			 */
+ 			if (*env) {
+-				pseudo_nosymlinkexp = strtol(env, &endptr, 10);
++				pseudo_nosymlinkexp = pseudo_strtol_wrapper(env, &endptr, 10);
+ 				if (*endptr)
+ 					pseudo_nosymlinkexp = 1;
+ 			} else {
+@@ -624,20 +624,9 @@ pseudo_init_client(void) {
+ 			pseudo_nosymlinkexp = 0;
+ 		}
+ 		free(env);
+-		env = pseudo_get_value("PSEUDO_UIDS");
+-		if (env)
+-			sscanf(env, "%d,%d,%d,%d",
+-				&pseudo_ruid, &pseudo_euid,
+-				&pseudo_suid, &pseudo_fuid);
+-		free(env);
+-
+-		env = pseudo_get_value("PSEUDO_GIDS");
+-		if (env)
+-			sscanf(env, "%d,%d,%d,%d",
+-				&pseudo_rgid, &pseudo_egid,
+-				&pseudo_sgid, &pseudo_fuid);
+-		free(env);
  
- #include <stdio.h>
- #include <signal.h>
++		readenv_uids();
++		readenv_gids();
+ 		env = pseudo_get_value("PSEUDO_CHROOT");
+ 		if (env) {
+ 			pseudo_chroot = strdup(env);
+@@ -1030,7 +1019,7 @@ client_spawn_server(void) {
+ 			pseudo_pidfile = pseudo_localstatedir_path(PSEUDO_PIDFILE);
+ 			fp = fopen(pseudo_pidfile, "r");
+ 			if (fp) {
+-				if (fscanf(fp, "%d", &server_pid) != 1) {
++				if (read_pidfile(fp, &server_pid) != 1) {
+ 					pseudo_debug(PDBGF_CLIENT, "Opened server PID file, but didn't get a pid.\n");
+ 				}
+ 				fclose(fp);
+@@ -1295,7 +1284,7 @@ pseudo_client_setup(void) {
+ 	fp = fopen(pseudo_pidfile, "r");
+ 	free(pseudo_pidfile);
+ 	if (fp) {
+-		if (fscanf(fp, "%d", &server_pid) != 1) {
++		if (read_pidfile(fp, &server_pid) != 1) {
+ 			pseudo_debug(PDBGF_CLIENT, "Opened server PID file, but didn't get a pid.\n");
+ 		}
+ 		fclose(fp);
+Index: git/pseudo_client_scanf.c
+===================================================================
+--- /dev/null
++++ git/pseudo_client_scanf.c
+@@ -0,0 +1,39 @@
++#include <stdio.h>
++#include "pseudo.h"
++#include "pseudo_ipc.h"
++#include "pseudo_client.h"
++
++/*
++ * glibc 2.38 would include  __isoc23_strtol and similar symbols if _GNU_SOURCE
++ * is used. We have to set that for other definitions so delcare this wrapper
++ * in a context where we don't have that set.
++ *
++ * We need to wrap strtol, strtoll, atoi, fscanf and sscanf.
++ */
++
++void readenv_uids(void)
++{
++	char *env;
++	env = pseudo_get_value("PSEUDO_UIDS");
++	if (env)
++		sscanf(env, "%d,%d,%d,%d",
++			&pseudo_ruid, &pseudo_euid,
++			&pseudo_suid, &pseudo_fuid);
++	free(env);
++}
++
++void readenv_gids(void)
++{
++	char *env;
++	env = pseudo_get_value("PSEUDO_GIDS");
++	if (env)
++		sscanf(env, "%d,%d,%d,%d",
++			&pseudo_rgid, &pseudo_egid,
++			&pseudo_sgid, &pseudo_fuid);
++	free(env);
++}
++
++int read_pidfile(FILE *fp, int *server_pid)
++{
++	return fscanf(fp, "%d", server_pid);
++}
+Index: git/pseudo_client.h
+===================================================================
+--- git.orig/pseudo_client.h
++++ git/pseudo_client.h
+@@ -74,6 +74,10 @@ extern int pseudo_nosymlinkexp;
+ 
+ extern int pseudo_umask;
+ 
++extern void readenv_uids(void);
++extern void readenv_gids(void);
++extern int read_pidfile(FILE *, int *);
++
+ /* Root can read and write files, and enter directories which have no
+  * read, write, or execute permissions.  (But can't execute files without
+  * execute permissions!)
