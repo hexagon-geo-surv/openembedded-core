@@ -544,7 +544,7 @@ DESCRIPTION
     the --source param given to that partition.  For example, if the
     partition is set up like this:
 
-      part /boot --source bootimg_pcbios   ...
+      part /boot --source bootimg_pcbios --sourceparams="loader-bios=syslinux" ...
 
     then the methods defined as class members of the plugin having the
     matching bootimg_pcbios .name class member would be used.
@@ -794,7 +794,7 @@ DESCRIPTION
 
      Here is a content of test.wks:
 
-     part /boot --source bootimg_pcbios --ondisk sda --label boot --active --align 1024
+     part /boot --source bootimg_pcbios --sourceparams="loader-bios=grub" --ondisk sda --label boot --active --align 1024
      part / --source rootfs --ondisk sda --fstype=ext3 --label platform --align 1024
 
      bootloader  --timeout=0  --append="rootwait rootfstype=ext3 video=vesafb vga=0x318 console=tty0"

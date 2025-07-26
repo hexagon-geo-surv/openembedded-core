@@ -71,7 +71,7 @@ class BootimgBiosPlusEFIPlugin(SourcePlugin):
     plugin, as long they does not cause issue in the other plugin.
 
     Example wic configuration:
-    part /boot --source bootimg_biosplusefi --sourceparams="loader=grub-efi"\\
+    part /boot --source bootimg_biosplusefi --sourceparams="loader=grub-efi,loader-bios=syslinux" \\
                --ondisk sda --label os_boot --active --align 1024 --use-uuid
     """
 
