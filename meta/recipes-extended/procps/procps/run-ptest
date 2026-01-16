@@ -1,0 +1,7 @@
+#!/bin/sh
+
+cd ./testsuite
+for tool in @DEJATOOL@;do
+    runtest -a --tool $tool --outdir ../log
+done
+

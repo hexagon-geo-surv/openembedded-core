@@ -10,12 +10,14 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
 
 DEPENDS = "ncurses"
 
-inherit autotools gettext pkgconfig update-alternatives
+inherit autotools gettext pkgconfig update-alternatives ${@bb.utils.contains('TCLIBC', 'glibc', 'ptest', '', d)}
 
 SRC_URI = "git://gitlab.com/procps-ng/procps.git;protocol=https;branch=master;tag=v${PV} \
            file://sysctl.conf \
            file://top_large_pid_fix.patch \
            "
+SRC_URI:append:libc-glibc = " file://run-ptest"
+
 SRCREV = "f46b2f7929cdfe2913ed0a7f585b09d6adbf994e"
 
 # Upstream has a custom autogen.sh which invokes po/update-potfiles as they
@@ -47,8 +49,51 @@ do_install:append () {
         fi
 }
 
-CONFFILES:${PN} = "${sysconfdir}/sysctl.conf"
+do_compile_ptest() {
+    oe_runmake -C testsuite site.exp
+    oe_runmake src/tests/test_process src/tests/test_strutils  src/tests/test_fileutils src/tests/test_shm
+    DEJATOOL=$(make -C testsuite -s -f Makefile -f - <<'EOF'
+all:
+	$(info $(DEJATOOL))
+EOF
+)
+    echo $DEJATOOL > ${B}/testsuite/.dejatool
+}
 
+do_install_ptest() {
+     install -d ${D}${PTEST_PATH}/testsuite
+     install -d ${D}${PTEST_PATH}/src
+     install -d ${D}${PTEST_PATH}/log
+
+     cp -r ${S}/testsuite/* ${D}${PTEST_PATH}/testsuite/
+     cp -r ${B}/testsuite/* ${D}${PTEST_PATH}/testsuite/
+     cp -r ${B}/src/tests ${D}${PTEST_PATH}/src/
+
+     rm -rf ${D}${PTEST_PATH}/testsuite/Makefile*
+     rm -rf ${D}${PTEST_PATH}/testsuite/README
+     find ${D}${PTEST_PATH}/testsuite/ -type f -name "*.o" -exec rm -f {} +
+     find ${D}${PTEST_PATH}/src/ -type f -name "*.o" -exec rm -f {} +
+
+     sed -i -e "/set srcdir/c\set srcdir ${PTEST_PATH}/testsuite" \
+            -e "/set objdir/c\set objdir ${PTEST_PATH}/testsuite" ${D}${PTEST_PATH}/testsuite/site.exp
+
+     DEJATOOL=$(cat ${B}/testsuite/.dejatool)
+     sed -i -e "s#@DEJATOOL@#$DEJATOOL#g" ${D}${PTEST_PATH}/run-ptest
+     for p in $DEJATOOL; do
+        if [ "$p" = "ps" ]; then
+            install -d ${D}${PTEST_PATH}/src/ps
+            ln -sf ${base_bindir}/ps ${D}${PTEST_PATH}/src/ps/pscommand
+        elif [ "$p" = "sysctl" ]; then
+            ln -sf ${base_sbindir}/$p ${D}${PTEST_PATH}/src/$p
+        elif [ "$p" = "kill" ] || [ "$p" = "pidof" ] || [ "$p" = "watch" ]; then
+            ln -sf ${base_bindir}/$p ${D}${PTEST_PATH}/src/$p
+        else
+            ln -sf ${bindir}/$p ${D}${PTEST_PATH}/src/$p
+        fi
+     done
+}
+
+CONFFILES:${PN} = "${sysconfdir}/sysctl.conf"
 bindir_progs = "free pkill pmap pgrep pwdx skill snice top uptime w"
 base_bindir_progs += "kill pidof ps watch"
 base_sbindir_progs += "sysctl"
@@ -79,6 +124,8 @@ RDEPENDS:${PN} += "${PROCPS_PACKAGES}"
 
 RDEPENDS:${PN}-ps += "${PN}-lib"
 RDEPENDS:${PN}-sysctl += "${PN}-lib"
+
+RDEPENDS:${PN}-ptest += "dejagnu bash glibc-utils"
 
 FILES:${PN}-lib = "${libdir}"
 FILES:${PN}-ps = "${base_bindir}/ps.${BPN}"
