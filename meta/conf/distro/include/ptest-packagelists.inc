@@ -34,6 +34,7 @@ PTESTS_FAST = "\
     libgpg-error\
     libnl \
     libpcre \
+    libpcre2 \
     librsvg \
     libssh2 \
     libtest-fatal-perl \
