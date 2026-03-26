@@ -25,7 +25,7 @@ do_install:append() {
     mv ${D}${bindir}/cygdb ${D}${bindir}/cygdb3
 }
 
-RDEPENDS:${PN}:append:class-target = " \
+RDEPENDS:${PN}:class-target += "\
     python3-misc \
     python3-netserver \
     python3-pkgutil \
@@ -35,7 +35,7 @@ RDEPENDS:${PN}:append:class-target = " \
     python3-xml \
 "
 
-RDEPENDS:${PN}:append:class-nativesdk = " \
+RDEPENDS:${PN}:class-nativesdk += "\
     nativesdk-python3-misc \
     nativesdk-python3-netserver \
     nativesdk-python3-pkgutil \
