@@ -8,6 +8,7 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=336d6faf40fb600bafb0061f4052f1f4 \
 DEPENDS = "libsndfile1"
 
 SRC_URI = "${GITHUB_BASE_URI}/download/${PV}/libsamplerate-${PV}.tar.xz \
+           file://run-ptest \
 "
 
 SRC_URI[sha256sum] = "3258da280511d24b49d6b08615bbe824d0cacc9842b0e4caf11c52cf2b043893"
@@ -18,9 +19,22 @@ GITHUB_BASE_URI = "https://github.com/libsndfile/libsamplerate/releases"
 
 S = "${UNPACKDIR}/libsamplerate-${PV}"
 
-inherit autotools pkgconfig github-releases
+inherit autotools pkgconfig github-releases ptest
 
 # FFTW and ALSA are only used in tests and examples, so they don't affect
 # normal builds. It should be safe to ignore these, but explicitly disabling
 # them adds some extra certainty that builds are deterministic.
 EXTRA_OECONF = "--disable-fftw --disable-alsa"
+do_compile:append() {
+    oe_runmake buildtest-TESTS
+}
+
+do_install_ptest() {
+    install -d ${D}${PTEST_PATH}/tests
+
+    for t in $(makefile-getvar ${B}/Makefile check_PROGRAMS); do
+        [ -x "${B}/$t" ] || continue
+        "${B}/libtool" --mode=install install -c \
+            "${B}/$t" "${D}${PTEST_PATH}/tests/$(basename "$t")"
+    done
+}

@@ -1,0 +1,47 @@
+#!/bin/sh
+
+set -e
+
+TESTDIR="$(dirname "$0")/tests"
+
+total=0
+pass=0
+fail=0
+
+if [ ! -d "$TESTDIR" ]; then
+    echo "(tests directory missing)"
+    exit 1
+fi
+
+echo "----- Executables are: -----"
+
+for t in "$TESTDIR"/*; do
+    [ -x "$t" ] || continue
+    echo "$(basename "$t")"
+done
+
+echo "----------------------------------------------"
+
+for t in "$TESTDIR"/*; do
+    [ -x "$t" ] || continue
+
+    name="$(basename "$t")"
+    echo "Running $name"
+    total=$((total + 1))
+
+    if "$t"; then
+        echo "PASS: $name"
+        pass=$((pass + 1))
+    else
+        status=$?
+        echo "FAIL: $name (exit=$status)"
+        fail=$((fail + 1))
+	fi
+done
+
+echo "============================================================================"
+echo "# TOTAL: $total"
+echo "# PASS:  $pass"
+echo "# FAIL:  $fail"
+echo "============================================================================"
+[ "$fail" -eq 0 ]
