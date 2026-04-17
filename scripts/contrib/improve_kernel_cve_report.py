@@ -82,16 +82,59 @@ def get_kernel_cves(datadir, compiled_files, version):
                 "description": f"Rejected by CNA"
             }
             continue
-        if any(elem in cve_file for elem in ["review", "reverved", "testing"]):
+        if any(elem in cve_file for elem in ["review", "reverved", "testing", "tmp"]):
             continue
 
-        is_vulnerable, first_affected, last_affected, better_match_first, better_match_last, affected_versions = get_cpe_applicability(cve_info, version)
+        first_affected, fixed, backport_ver = get_fixed_versions(cve_info, base_version)
 
-        logging.debug("%s: %s (%s - %s) (%s - %s)", cve_id, is_vulnerable, better_match_first, better_match_last, first_affected, last_affected)
+        logging.debug("%s: first_affected=%s fixed=%s backport=%s", cve_id, first_affected, fixed, backport_ver)
 
-        if is_vulnerable is None:
-            logging.warning("%s doesn't have good metadata", cve_id)
-        if is_vulnerable:
+        if not fixed:
+            logging.warning("%s has no known resolution", cve_id)
+            cves[cve_id] = {
+                "id": cve_id,
+                "status": "Unpatched",
+                "detail": "known-affected",
+                "summary": description,
+                "description": "No known resolution"
+            }
+            vulnerable += 1
+            continue
+        elif first_affected and version < first_affected:
+            logging.debug('%s - fixed-version: only affects %s onwards',
+                          cve_id, first_affected)
+            cves[cve_id] = {
+                "id": cve_id,
+                "status": "Patched",
+                "detail": "fixed-version",
+                "summary": description,
+                "description": f"only affects {first_affected} onwards"
+            }
+            not_vulnerable += 1
+        elif fixed <= version:
+            logging.debug("%s - fixed-version: Fixed from version %s",
+                          cve_id, fixed)
+            cves[cve_id] = {
+                "id": cve_id,
+                "status": "Patched",
+                "detail": "fixed-version",
+                "summary": description,
+                "description": f"Fixed from version {fixed}"
+            }
+            not_vulnerable += 1
+        elif backport_ver and backport_ver <= version:
+            logging.debug("%s - cpe-stable-backport: Backported in %s",
+                          cve_id, backport_ver)
+            cves[cve_id] = {
+                "id": cve_id,
+                "status": "Patched",
+                "detail": "cpe-stable-backport",
+                "summary": description,
+                "description": f"Backported in {backport_ver}"
+            }
+            not_vulnerable += 1
+        else:
+            # Vulnerable - may need backporting
             is_affected = True
             affected_files = []
             if check_config:
@@ -108,87 +151,21 @@ def get_kernel_cves(datadir, compiled_files, version):
                     "summary": description,
                     "description": f"Source code not compiled by config. {sorted(affected_files)}"
                 }
-                not_applicable_config +=1
-            # Check if we have backport
+                not_applicable_config += 1
             else:
-                if not better_match_last:
-                    fixed_in = last_affected
-                else:
-                    fixed_in = better_match_last
+                fixed_in = backport_ver if backport_ver else fixed
                 logging.debug("%s needs backporting (fixed from %s)", cve_id, fixed_in)
                 cves[cve_id] = {
-                        "id": cve_id,
-                        "status": "Unpatched",
-                        "detail": "version-in-range",
-                        "summary": description,
-                        "description": f"Needs backporting (fixed from {fixed_in})"
+                    "id": cve_id,
+                    "status": "Unpatched",
+                    "detail": "version-in-range",
+                    "summary": description,
+                    "description": f"Needs backporting (fixed from {fixed_in})"
                 }
                 vulnerable += 1
-                if (better_match_last and
-                    Version(f"{better_match_last.major}.{better_match_last.minor}") == base_version):
+                if (backport_ver and
+                    Version(f"{backport_ver.major}.{backport_ver.minor}") == base_version):
                     fixed_as_later_backport += 1
-        # Not vulnerable
-        else:
-            if not first_affected:
-                logging.debug("%s - not known affected %s",
-                              cve_id,
-                              better_match_last)
-                cves[cve_id] = {
-                    "id": cve_id,
-                    "status": "Patched",
-                    "detail": "version-not-in-range",
-                    "summary": description,
-                    "description": "No CPE match"
-                }
-                not_vulnerable += 1
-                continue
-            backport_base = Version(f"{better_match_last.major}.{better_match_last.minor}")
-            if version < first_affected:
-                logging.debug('%s - fixed-version: only affects %s onwards',
-                              cve_id,
-                              first_affected)
-                cves[cve_id] = {
-                    "id": cve_id,
-                    "status": "Patched",
-                    "detail": "fixed-version",
-                    "summary": description,
-                    "description": f"only affects {first_affected} onwards"
-                }
-                not_vulnerable += 1
-            elif last_affected <= version:
-                logging.debug("%s - fixed-version: Fixed from version %s",
-                              cve_id,
-                              last_affected)
-                cves[cve_id] = {
-                    "id": cve_id,
-                    "status": "Patched",
-                    "detail": "fixed-version",
-                    "summary": description,
-                    "description": f"Fixed from version {last_affected}"
-                }
-                not_vulnerable += 1
-            elif backport_base == base_version:
-                logging.debug("%s - cpe-stable-backport: Backported in %s",
-                              cve_id,
-                              better_match_last)
-                cves[cve_id] = {
-                    "id": cve_id,
-                    "status": "Patched",
-                    "detail": "cpe-stable-backport",
-                    "summary": description,
-                    "description": f"Backported in {better_match_last}"
-                }
-                not_vulnerable += 1
-            else:
-                logging.debug("%s - version not affected %s", cve_id, str(affected_versions))
-                cves[cve_id] = {
-                    "id": cve_id,
-                    "status": "Patched",
-                    "detail": "version-not-in-range",
-                    "summary": description,
-                    "description": f"Range {affected_versions}"
-                }
-                not_vulnerable += 1
 
     logging.info("Total CVEs ignored due to not applicable config: %d", not_applicable_config)
     logging.info("Total CVEs not vulnerable due version-not-in-range: %d", not_vulnerable)
@@ -276,70 +253,54 @@ def check_kernel_compiled_files(compiled_files, cve_info):
                 is_affected = True
     return is_affected, files_affected
 
-def get_cpe_applicability(cve_info, v):
+def get_fixed_versions(cve_info, base_version):
     '''
-    Check if version is affected and return affected versions
+    Get fixed versionss
     '''
-    base_branch = Version(f"{v.major}.{v.minor}")
-    affected = []
-    if not 'cpeApplicability' in cve_info["containers"]["cna"]:
-        return None, None, None, None, None, None
+    first_affected = None
+    fixed = None
+    fixed_backport = None
+    next_version = Version(str(base_version) + ".5000")
+    for affected in cve_info["containers"]["cna"]["affected"]:
+        # In case the CVE info is not complete, it might not have default status and therefore
+        # we don't know the status of this CVE.
+        if not "defaultStatus" in affected:
+            return first_affected, fixed, fixed_backport
+        if affected["defaultStatus"] == "affected":
+            for version in affected["versions"]:
+                v = Version(version["version"])
+                if v == Version('0'):
+                    #Skiping non-affected
+                    continue
+                if version["status"] == "unaffected" and first_affected and v < first_affected:
+                    first_affected = Version(f"{v.major}.{v.minor}")
+                if version["status"] == "affected" and not first_affected:
+                    first_affected = v
+                elif (version["status"] == "unaffected" and
+                    version['versionType'] == "original_commit_for_fix"):
+                    fixed = v
+                elif base_version < v and v < next_version:
+                    fixed_backport = v
+        elif affected["defaultStatus"] == "unaffected":
+            # Only specific versions are affected. We care only about our base version
+            if "versions" not in affected:
+                continue
+            for version in affected["versions"]:
+                if "versionType" not in version:
+                    continue
+                if version["versionType"] == "git":
+                    continue
+                v = Version(version["version"])
+                # in case it is not in our base version
+                less_than = Version(version["lessThan"])
 
-    for nodes in cve_info["containers"]["cna"]["cpeApplicability"]:
-        for node in nodes.values():
-            vulnerable = False
-            matched_branch = False
-            first_affected = Version("5000")
-            last_affected = Version("0")
-            better_match_first = Version("0")
-            better_match_last = Version("5000")
+                if not first_affected:
+                    first_affected = v
+                fixed = less_than
+                if base_version < v and v < next_version:
+                    fixed_backport = less_than
 
-            if len(node[0]['cpeMatch']) == 0:
-                first_affected = None
-                last_affected = None
-                better_match_first = None
-                better_match_last = None
-
-            for cpe_match in node[0]['cpeMatch']:
-                version_start_including = Version("0")
-                version_end_excluding = Version("0")
-                if 'versionStartIncluding' in cpe_match:
-                    version_start_including = Version(cpe_match['versionStartIncluding'])
-                else:
-                    version_start_including = Version("0")
-                # if versionEndExcluding is missing we are in a branch, which is not fixed.
-                if "versionEndExcluding" in cpe_match:
-                    version_end_excluding = Version(cpe_match["versionEndExcluding"])
-                else:
-                    # if versionEndExcluding is missing we are in a branch, which is not fixed.
-                    version_end_excluding = Version(
-                        f"{version_start_including.major}.{version_start_including.minor}.5000"
-                    )
-                affected.append(f" {version_start_including}-{version_end_excluding}")
-                # Detect if versionEnd is in fixed in base branch. It has precedence over the rest
-                branch_end = Version(f"{version_end_excluding.major}.{version_end_excluding.minor}")
-                if branch_end == base_branch:
-                    if version_start_including <= v < version_end_excluding:
-                        vulnerable = cpe_match['vulnerable']
-                    # If we don't match in our branch, we are not vulnerable,
-                    # since we have a backport
-                    matched_branch = True
-                    better_match_first = version_start_including
-                    better_match_last = version_end_excluding
-                if version_start_including <= v < version_end_excluding and not matched_branch:
-                    if version_end_excluding < better_match_last:
-                        better_match_first = max(version_start_including, better_match_first)
-                        better_match_last = min(better_match_last, version_end_excluding)
-                        vulnerable = cpe_match['vulnerable']
-                        matched_branch = True
-
-                first_affected = min(version_start_including, first_affected)
-                last_affected = max(version_end_excluding, last_affected)
-            # Not a better match, we use the first and last affected instead of the fake .5000
-            if vulnerable and better_match_last == Version(f"{base_branch}.5000"):
-                better_match_last = last_affected
-                better_match_first = first_affected
-    return vulnerable, first_affected, last_affected, better_match_first, better_match_last, affected
+    return first_affected, fixed, fixed_backport
 
 def copy_data(old, new):
     '''Update dictionary with new entries, while keeping the old ones'''
