@@ -248,6 +248,8 @@ def staging_populate_sysroot_dir(targetsysroot, nativesysroot, native, d):
     for p in sorted(postinsts):
         bb.note("Running postinst {}, output:\n{}".format(p, subprocess.check_output(p, shell=True, stderr=subprocess.STDOUT)))
 
+staging_populate_sysroot_dir[vardepsexclude] += "PACKAGE_EXTRA_ARCHS"
+
 #
 # Manifests here are complicated. The main sysroot area has the unpacked sstate
 # which us unrelocated and tracked by the main sstate manifests. Each recipe
