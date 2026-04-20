@@ -16,6 +16,9 @@ IMAGE_BUILDINFO_VARS ?= "DISTRO DISTRO_VERSION"
 IMAGE_BUILDINFO_FILE ??= "${sysconfdir}/buildinfo"
 SDK_BUILDINFO_FILE ??= "/buildinfo"
 
+# Deploy the file alongside the images.
+IMAGE_BUILDINFO_DEPLOY ??= "0"
+
 # From buildhistory.bbclass
 def image_buildinfo_outputvars(vars, d):
     vars = vars.split()
@@ -70,12 +73,20 @@ python buildinfo_image () {
     bb.build.exec_func("buildinfo", d)
 }
 
+python buildinfo_deploy() {
+    d.setVar("BUILDINFODEST", "${IMGDEPLOYDIR}/")
+    d.setVar("IMAGE_BUILDINFO_FILE", "${IMAGE_NAME}.buildinfo")
+    bb.build.exec_func("buildinfo", d)
+}
+do_image[postfuncs] += "create_symlinks"
+do_image[subimages] += "buildinfo"
+
 python buildinfo_sdk () {
     d.setVar("BUILDINFODEST", "${SDK_OUTPUT}/${SDKPATH}")
     d.setVar("IMAGE_BUILDINFO_FILE", d.getVar("SDK_BUILDINFO_FILE"))
     bb.build.exec_func("buildinfo", d)
 }
 
-IMAGE_PREPROCESS_COMMAND += "buildinfo_image"
+IMAGE_PREPROCESS_COMMAND += "buildinfo_image ${@oe.utils.vartrue('IMAGE_BUILDINFO_DEPLOY', 'buildinfo_deploy', '', d)}"
 POPULATE_SDK_PRE_TARGET_COMMAND += "buildinfo_sdk"
 
