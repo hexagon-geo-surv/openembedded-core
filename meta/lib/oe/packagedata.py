@@ -340,7 +340,8 @@ fi
         allow_empty = d.getVar('ALLOW_EMPTY:%s' % pkg)
         if not allow_empty:
             allow_empty = d.getVar('ALLOW_EMPTY')
-        os.chdir(pkgdestpkg)
+        root = "%s/%s" % (pkgdest, pkg)
+        os.chdir(root)
         g = glob('*')
         if g or allow_empty == "1":
             # Symlinks needed for reverse lookups (from the final package name)
