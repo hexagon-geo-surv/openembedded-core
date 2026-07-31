@@ -516,6 +516,18 @@ class GitApplyTree(PatchTree):
     def commitIgnored(subject, dir=None, files=None, d=None):
         if files:
             runcmd(['git', 'add'] + files, dir)
+
+        # 'git add' can leave nothing actually staged even though the caller
+        # saw a dirty status: a path can show as modified purely because it
+        # is a submodule/embedded git repository with modified or untracked
+        # content of its own (e.g. a further nested git repo from another
+        # destsuffix SRC_URI entry) - git refuses to record that via a plain
+        # 'git add'/'git commit' without resolving the submodule's own state,
+        # so the commit below would fail with "no changes added to commit".
+        # Skip the commit if there is nothing actually staged.
+        if not runcmd(['git', 'diff', '--cached', '--name-only'], dir).strip():
+            return
+
         cmd = ["git"]
         GitApplyTree.gitCommandUserOptions(cmd, d=d)
         cmd += ["commit", "-m", subject, "--no-verify", "--no-gpg-sign"]
