@@ -97,6 +97,22 @@ python devtool_post_unpack() {
 
     scriptutils.git_convert_standalone_clone(srcsubdir)
 
+    # Recipes can use multiple git SRC_URI entries with an explicit destsuffix to
+    # unpack several repositories as nested subdirectories of the source tree
+    # (e.g. recipes with separate repos for the kernel, modules and
+    # application). Each such entry is unpacked as its own 'git clone -s' and
+    # needs the same standalone conversion as srcsubdir above, otherwise it keeps
+    # referencing objects in the downloads dir that 'bitbake -c cleanall' removes.
+    # We only look at entries with an explicit destsuffix param, since that's the
+    # only way a recipe ends up with more than one git checkout under S - this
+    # avoids having to duplicate the fetcher's internal default-destsuffix logic.
+    import bb.fetch2
+    fetch = bb.fetch2.Fetch(d.getVar('SRC_URI').split(), d)
+    for url in fetch.urls:
+        ud = fetch.ud[url]
+        if ud.type == 'git' and ud.parm.get('destsuffix'):
+            scriptutils.git_convert_standalone_clone(os.path.join(unpackdir, ud.parm['destsuffix']))
+
     # Make sure that srcsubdir exists
     bb.utils.mkdirhier(srcsubdir)
     if not os.listdir(srcsubdir):
