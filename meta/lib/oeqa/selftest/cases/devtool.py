@@ -1265,6 +1265,70 @@ class DevtoolModifyTests(DevtoolBase):
         self.assertExists(os.path.join(source_repo_gitsm_gitmodules, 'bitbake'), 'Submodule not found')
         self.assertExists(os.path.join(source_repo_gitsm_gitmodules, 'bitbake-gitsm-test1'), 'Submodule not found')
 
+    def test_devtool_modify_multi_git_destsuffix_standalone(self):
+        """
+        Verify that devtool modify converts all nested git repos (from multiple
+        SRC_URI git entries with different destsuffix values) to standalone clones
+        so that 'bitbake -c cleanall' does not break the devtool workspace.
+
+        The recipe (devtool-test-multi-destsuffix) has three git SRC_URI entries
+        with S = ${UNPACKDIR}, each nested inside the previous repo's own
+        working tree:
+            destsuffix=level1               -> srcdir/level1/
+            destsuffix=level1/level2        -> srcdir/level1/level2/
+            destsuffix=level1/level2/level3 -> srcdir/level1/level2/level3/
+
+        This mirrors real-world recipes that embed multiple module repos
+        as nested subdirectories of the primary source tree, including the
+        case where one repo's checkout lives inside another repo's working
+        tree rather than merely under a shared plain directory.
+        """
+        testrecipe = 'devtool-test-multi-destsuffix'
+        src_uri = get_bb_var('SRC_URI', testrecipe)
+        self.assertIn('git://', src_uri,
+                      'This test expects %s to have git SRC_URI entries' % testrecipe)
+        self.track_for_cleanup(self.workspacedir)
+        self.add_command_to_tearDown('devtool reset %s' % testrecipe)
+        self.add_command_to_tearDown('bitbake-layers remove-layer */workspace')
+        result = runCmd('devtool modify %s' % testrecipe)
+        self.assertEqual(result.status, 0,
+                         'devtool modify failed: %s' % result.output)
+        srcdir = os.path.join(self.workspacedir, 'sources', testrecipe)
+        nested_paths = [
+            ('level1', 'level1'),
+            ('level2', 'level1/level2'),
+            ('level3', 'level1/level2/level3'),
+        ]
+
+        for name, subpath in nested_paths:
+            repo_path = os.path.join(srcdir, subpath)
+            self.assertExists(os.path.join(repo_path, '.git'),
+                              'Repo %s (.git) not found in devtool workspace' % name)
+
+        # Key assertion: no nested repo should retain a git alternates file.
+        # devtool modify must repack objects locally so the workspace does not
+        # depend on the downloads cache, which 'bitbake -c cleanall' will delete.
+        for name, subpath in nested_paths:
+            repo_path = os.path.join(srcdir, subpath)
+            alternates_file = os.path.join(repo_path, '.git', 'objects',
+                                           'info', 'alternates')
+            self.assertNotExists(alternates_file,
+                                 'Repo %s still has a git alternates file after '
+                                 'devtool modify' % name)
+
+        # Verify the workspace survives cleanall, which removes the shared
+        # objects in the downloads cache that alternates would reference.
+        bitbake('%s -c cleanall' % testrecipe)
+
+        # After cleanall all repos must still be usable.
+        # A broken alternates file would cause git operations to fail.
+        for name, subpath in nested_paths:
+            repo_path = os.path.join(srcdir, subpath)
+            result = runCmd('git status', cwd=repo_path)
+            self.assertEqual(result.status, 0,
+                             'git status failed in repo %s after cleanall: %s'
+                             % (name, result.output))
+
 class DevtoolUpdateTests(DevtoolBase):
 
     def test_devtool_update_recipe(self):
