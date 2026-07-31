@@ -197,9 +197,59 @@ def setup_git_repo(repodir, version, devbranch, basetag='devtool-base', d=None):
     """
     import bb.process
     import oe.patch
+
+    def register_nested_git_submodules():
+        # If the recipe unpacks another git repo inside S (e.g. multiple git
+        # SRC_URI entries with destsuffix), declare it as a regular git
+        # submodule now, so we will be able to tag branches on it and extract
+        # patches when doing finish/update on the recipe. This must happen
+        # before anything else commits that nested repo as a bare,
+        # unregistered gitlink: once that happens 'git status' no longer
+        # reports it as untracked ("?? <dir>/"), so this detection can never
+        # find it. That can happen either from 'git add -A .' below (for a
+        # freshly-initialized repo) or, when repodir is already its own git
+        # repo (e.g. a recipe fetched via plain git://), from a later 'git
+        # add' done elsewhere (patch_task_postfunc, after do_patch) - so this
+        # is called both from the fresh-repo branch below and from the
+        # already-a-repo branch, before either has a chance to do that.
+        #
+        # Discover nested repos top-down (so we can still skip descending into
+        # a repo that manages its own submodules via .gitmodules), but do the
+        # actual 'git submodule add' + commit bottom-up (deepest repo first):
+        # a parent's commit recording its child's current HEAD must happen
+        # after that child is fully finalized, otherwise a deeper repo added
+        # later on gets its own registration commit, moving the child's HEAD
+        # forward again and leaving the parent's already-made commit pointing
+        # at a stale, superseded revision of it.
+        stdout, _ = bb.process.run("git status --porcelain", cwd=repodir)
+        nested_repos = []
+        for line in stdout.splitlines():
+            if line.endswith("/"):
+                new_dir = line.split()[1]
+                for root, dirs, files in os.walk(os.path.join(repodir, new_dir)):
+                    if ".git" in dirs + files:
+                        nested_repos.append(root)
+                        # Do not descend into nested git repos that have submodules themselves.
+                        if ".gitmodules" in files:
+                            logger.warning('Nested git repository with submodules %s; devtool will not recurse into it', root)
+                            dirs[:] = []
+
+        for root in reversed(nested_repos):
+            parentdir = os.path.join(root, "..")
+            (stdout, _) = bb.process.run('git remote', cwd=root)
+            remote = stdout.splitlines()[0]
+            (stdout, _) = bb.process.run('git remote get-url %s' % remote, cwd=root)
+            remote_url = stdout.splitlines()[0]
+            logger.error(os.path.relpath(parentdir, root))
+            bb.process.run('git submodule add %s %s' % (remote_url, os.path.relpath(root, parentdir)), cwd=parentdir)
+            oe.patch.GitApplyTree.commitIgnored("Add additional submodule from SRC_URI", dir=parentdir, d=d)
+
     if not os.path.exists(os.path.join(repodir, '.git')):
         bb.process.run('git init', cwd=repodir)
         bb.process.run('git config --local gc.autodetach 0', cwd=repodir)
+
+        register_nested_git_submodules()
+
         bb.process.run('git add -f -A .', cwd=repodir)
         commit_cmd = ['git']
         oe.patch.GitApplyTree.gitCommandUserOptions(commit_cmd, d=d)
@@ -214,6 +264,12 @@ def setup_git_repo(repodir, version, devbranch, basetag='devtool-base', d=None):
             commitmsg = "Initial commit from upstream"
         commit_cmd += ['-m', commitmsg]
         bb.process.run(commit_cmd, cwd=repodir)
+    else:
+        # repodir is already a git repo in its own right (e.g. a recipe whose
+        # top-level source is fetched via plain git://), so there was no
+        # fresh init/initial commit above to interfere with detecting nested
+        # repos - do it here instead, at the earliest point available.
+        register_nested_git_submodules()
 
     # Ensure singletask.lock (as used by externalsrc.bbclass) is ignored by git
     gitinfodir = os.path.join(repodir, '.git', 'info')
@@ -237,29 +293,6 @@ def setup_git_repo(repodir, version, devbranch, basetag='devtool-base', d=None):
     bb.process.run('git checkout -b %s' % devbranch, cwd=repodir)
     bb.process.run('git tag -f --no-sign %s' % basetag, cwd=repodir)
 
-    # if recipe unpacks another git repo inside S, we need to declare it as a regular git submodule now,
-    # so we will be able to tag branches on it and extract patches when doing finish/update on the recipe
-    stdout, _ = bb.process.run("git status --porcelain", cwd=repodir)
-    found = False
-    for line in stdout.splitlines():
-        if line.endswith("/"):
-            new_dir = line.split()[1]
-            for root, dirs, files in os.walk(os.path.join(repodir, new_dir)):
-                if ".git" in dirs + files:
-                    (stdout, _) = bb.process.run('git remote', cwd=root)
-                    remote = stdout.splitlines()[0]
-                    (stdout, _) = bb.process.run('git remote get-url %s' % remote, cwd=root)
-                    remote_url = stdout.splitlines()[0]
-                    logger.error(os.path.relpath(os.path.join(root, ".."), root))
-                    bb.process.run('git submodule add %s %s' % (remote_url, os.path.relpath(root, os.path.join(root, ".."))), cwd=os.path.join(root, ".."))
-                    # Do not descend into nested git repos that have submodules themselves.
-                    if ".gitmodules" in files:
-                        logger.warning('Nested git repository with submodules %s; devtool will not recurse into it', root)
-                        dirs[:] = []
-                    found = True
-                if found:
-                    oe.patch.GitApplyTree.commitIgnored("Add additional submodule from SRC_URI", dir=os.path.join(root, ".."), d=d)
-                    found = False
     if os.path.exists(os.path.join(repodir, '.gitmodules')):
         bb.process.run('git submodule foreach --recursive  "git tag -f --no-sign %s"' % basetag, cwd=repodir)
 
