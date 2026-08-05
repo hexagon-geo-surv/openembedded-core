@@ -26,8 +26,11 @@ class KernelModuleTest(OESDKTestCase):
         parallel_make = "-j %d" % (pmv) if pmv else ""
 
         self.ensure_target_package("kernel-devsrc")
+        # the kernel assigns HOSTPKG_CONFIG with '=', so it has to come from
+        # the make command line, as kernel.bbclass does
+        host_pkg_config = 'HOSTPKG_CONFIG="env -u PKG_CONFIG_SYSROOT_DIR -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR pkg-config"'
         # These targets need to be built before kernel modules can be built.
-        self._run("make %s -C $OECORE_TARGET_SYSROOT/usr/src/kernel prepare scripts" % (parallel_make))
+        self._run("make %s %s -C $OECORE_TARGET_SYSROOT/usr/src/kernel prepare scripts" % (parallel_make, host_pkg_config))
 
         with tempfile.TemporaryDirectory(prefix="cryptodev", dir=self.tc.sdk_dir) as testdir:
             git_url = "https://github.com/cryptodev-linux/cryptodev-linux"
@@ -39,5 +42,5 @@ class KernelModuleTest(OESDKTestCase):
             self.assertTrue(os.path.isdir(sourcedir))
             subprocess.check_output(["git", "-C", sourcedir, "checkout", git_sha], stderr=subprocess.STDOUT)
 
-            self._run("make -C %s V=1 KERNEL_DIR=$OECORE_TARGET_SYSROOT/usr/src/kernel" % sourcedir)
+            self._run("make -C %s V=1 %s KERNEL_DIR=$OECORE_TARGET_SYSROOT/usr/src/kernel" % (sourcedir, host_pkg_config))
             self.check_elf(os.path.join(sourcedir, "cryptodev.ko"))
