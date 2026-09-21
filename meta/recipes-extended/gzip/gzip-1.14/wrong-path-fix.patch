@@ -1,4 +1,4 @@
-From 885f15530d7e5442d5399b5216fcfc988eb2d721 Mon Sep 17 00:00:00 2001
+From eda9b1d08c517acbdc5b26c24c94a3985f29c749 Mon Sep 17 00:00:00 2001
 From: Ming Liu <ming.liu@windriver.com>
 Date: Fri, 21 Nov 2014 04:50:57 -0500
 Subject: [PATCH] fix MakeMaker issues with using wrong SHELL/GREP
@@ -20,7 +20,7 @@ Upstream-Status: Pending
  1 file changed, 1 insertion(+), 2 deletions(-)
 
 diff --git a/Makefile.am b/Makefile.am
-index 6491c8b..596fd9a 100644
+index 23e0d3e..3455878 100644
 --- a/Makefile.am
 +++ b/Makefile.am
 @@ -95,8 +95,7 @@ SUFFIXES = .in
