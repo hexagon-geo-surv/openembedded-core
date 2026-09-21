@@ -42,4 +42,4 @@ do_install_ptest() {
             ${B}/tests/Makefile > ${D}${PTEST_PATH}/src/tests/Makefile
 }
 
-SRC_URI[sha256sum] = "613d6ea44f1248d7370c7ccdeee0dd0017a09e6c39de894b3c6f03f981191c6b"
+SRC_URI[sha256sum] = "545886cf57fa88a65e967fbf705903d7fcb2567c82c7342493e82e8d7b1a210b"
